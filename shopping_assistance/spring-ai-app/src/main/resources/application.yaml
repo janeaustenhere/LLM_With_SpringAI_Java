@@ -5,29 +5,43 @@ shopping:
   shop-api-url: ${SHOP_API_URL:http://localhost:8080}
   shop-api-timeout: ${SHOP_API_TIMEOUT:30s}
   max-history-messages: ${MAX_HISTORY_MESSAGES:20}
+  redis-key-prefix: ${REDIS_KEY_PREFIX:shop}
+  chat-history-ttl: ${CHAT_HISTORY_TTL:30d}
 
 spring:
   application:
     name: shopping-assistant-spring-ai
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      timeout: ${REDIS_TIMEOUT:5s}
+
   ai:
     openai:
-      # Spring AI adds /v1/chat/completions to this root URL.
-      base-url: https://openrouter.ai/api/v1
+      base-url: ${OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
       api-key: ${OPENROUTER_API_KEY}
-
       chat:
         options:
           model: ${OPENROUTER_MODEL:openai/gpt-4o-mini}
           temperature: 0
 
+    chat:
+      memory:
+        repository:
+          redis:
+            host: ${REDIS_HOST:localhost}
+            port: ${REDIS_PORT:6379}
+            username: ${REDIS_USERNAME:}
+            password: ${REDIS_PASSWORD:}
+            index-name: shopping-chat-memory-index
+            key-prefix: "shop:spring-ai:memory:"
+            time-to-live: ${CHAT_MEMORY_TTL:30d}
+            initialize-schema: true
+
     retry:
       max-attempts: 2
-
-springdoc:
-  swagger-ui:
-    path: /swagger-ui.html
-
-logging:
-  level:
-    org.springframework.ai: INFO

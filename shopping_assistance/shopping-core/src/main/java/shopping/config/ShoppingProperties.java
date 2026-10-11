@@ -13,6 +13,12 @@ public record ShoppingProperties(
         Duration shopApiTimeout,
 
         @DefaultValue("20")
-        int maxHistoryMessages
+        int maxHistoryMessages,
+
+        @DefaultValue("shop")
+        String redisKeyPrefix,
+
+        @DefaultValue("30d")
+        Duration chatHistoryTtl
 ) {
 }

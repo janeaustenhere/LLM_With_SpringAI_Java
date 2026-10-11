@@ -47,9 +47,19 @@
         .row {
             display: flex;
             gap: 8px;
+            align-items: center;
         }
 
-        input {
+        .session-row {
+            margin-top: 16px;
+        }
+
+        #customer {
+            flex: 1;
+        }
+
+        input,
+        select {
             flex: 1;
             padding: 12px;
         }
@@ -86,6 +96,21 @@
             <button onclick="logout()">Sign out</button>
         </div>
 
+        <div class="row session-row">
+            <button id="new-chat" onclick="createSession()">
+                New chat
+            </button>
+
+            <select id="session-selector"
+                    aria-label="Select chat"
+                    onchange="switchSession(this.value)">
+            </select>
+
+            <button id="delete-chat" onclick="deleteCurrentSession()">
+                Delete chat
+            </button>
+        </div>
+
         <div id="messages"></div>
 
         <form id="chat-form" class="row">
@@ -105,11 +130,16 @@
 
     let token = localStorage.getItem("shopToken");
     let customerEmail = localStorage.getItem("customerEmail");
+    let activeSessionId = null;
+    let sessions = [];
 
     const loginSection = document.getElementById("login");
     const chatSection = document.getElementById("chat");
     const messages = document.getElementById("messages");
     const status = document.getElementById("status");
+    const sessionSelector = document.getElementById("session-selector");
+    const queryInput = document.getElementById("query");
+    const deleteChatButton = document.getElementById("delete-chat");
 
     if (token) {
         showChat();
@@ -150,7 +180,7 @@
                 customerEmail
             );
 
-            showChat();
+            await showChat();
             setStatus("");
         } catch (error) {
             setStatus(`Sign-in failed: ${error.message}`);
@@ -166,28 +196,31 @@
 
             if (!query) return;
 
+            if (!activeSessionId) {
+                setStatus("Create a chat before sending a message.");
+                return;
+            }
+
             input.value = "";
             addMessage("user", query);
             setStatus("Thinking...");
 
             try {
-                const authorization = encodeURIComponent(
-                    `Bearer ${token}`
-                );
-
                 const response = await fetch(
-                    `${api}/chat?authorization=${authorization}`,
+                    `${api}/chat`,
                     {
                         method: "POST",
-                        headers: {
-                            "Content-Type": "application/json"
-                        },
-                        body: JSON.stringify({query})
+                        headers: authHeaders(),
+                        body: JSON.stringify({
+                            sessionId: activeSessionId,
+                            query
+                        })
                     }
                 );
 
                 const data = await readResponse(response);
                 addMessage("assistant", data.answer);
+                await loadSessions(false);
                 setStatus("");
             } catch (error) {
                 addMessage(
@@ -198,38 +231,190 @@
             }
         });
 
-    async function logout() {
-        try {
-            const authorization = encodeURIComponent(
-                `Bearer ${token}`
-            );
+    function logout() {
+        token = null;
+        customerEmail = null;
+        activeSessionId = null;
+        sessions = [];
 
-            await fetch(
-                `${api}/chat/history?authorization=${authorization}`,
-                {
-                    method: "DELETE"
-                }
-            );
-        } finally {
-            token = null;
-            customerEmail = null;
+        localStorage.removeItem("shopToken");
+        localStorage.removeItem("customerEmail");
 
-            localStorage.removeItem("shopToken");
-            localStorage.removeItem("customerEmail");
-
-            messages.innerHTML = "";
-            chatSection.hidden = true;
-            loginSection.hidden = false;
-            setStatus("");
-        }
+        messages.innerHTML = "";
+        sessionSelector.innerHTML = "";
+        chatSection.hidden = true;
+        loginSection.hidden = false;
+        setStatus("");
     }
 
-    function showChat() {
+    async function showChat() {
         loginSection.hidden = true;
         chatSection.hidden = false;
 
         document.getElementById("customer").textContent =
             `Signed in as ${customerEmail ?? "customer"}`;
+
+        try {
+            await loadSessions(true);
+            setStatus("");
+        } catch (error) {
+            setStatus(`Could not load chats: ${error.message}`);
+        }
+    }
+
+    function authHeaders() {
+        return {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        };
+    }
+
+    async function createSession() {
+        setStatus("Creating chat...");
+
+        try {
+            const response = await fetch(
+                `${api}/chat/sessions`,
+                {
+                    method: "POST",
+                    headers: authHeaders(),
+                    body: JSON.stringify({title: "New chat"})
+                }
+            );
+
+            const session = await readResponse(response);
+            activeSessionId = session.sessionId;
+            messages.innerHTML = "";
+
+            await loadSessions(false);
+            updateControls();
+            queryInput.focus();
+            setStatus("");
+        } catch (error) {
+            setStatus(`Could not create chat: ${error.message}`);
+        }
+    }
+
+    async function loadSessions(loadSelectedHistory) {
+        const response = await fetch(
+            `${api}/chat/sessions`,
+            {headers: authHeaders()}
+        );
+
+        sessions = await readResponse(response);
+        sessionSelector.innerHTML = "";
+
+        for (const session of sessions) {
+            const option = document.createElement("option");
+            option.value = session.sessionId;
+            option.textContent =
+                `${session.title} · ${session.sessionId.slice(0, 8)}`;
+            sessionSelector.appendChild(option);
+        }
+
+        const activeSessionStillExists = sessions.some(
+            session => session.sessionId === activeSessionId
+        );
+
+        if (!activeSessionStillExists) {
+            activeSessionId = sessions.length > 0
+                ? sessions[0].sessionId
+                : null;
+            loadSelectedHistory = activeSessionId !== null;
+        }
+
+        if (activeSessionId) {
+            sessionSelector.value = activeSessionId;
+        } else {
+            messages.innerHTML = "";
+        }
+
+        updateControls();
+
+        if (loadSelectedHistory && activeSessionId) {
+            await loadHistory();
+        }
+    }
+
+    async function switchSession(sessionId) {
+        if (!sessionId || sessionId === activeSessionId) {
+            return;
+        }
+
+        activeSessionId = sessionId;
+        setStatus("Loading chat...");
+
+        try {
+            await loadHistory();
+            queryInput.focus();
+            setStatus("");
+        } catch (error) {
+            setStatus(`Could not load chat: ${error.message}`);
+        }
+    }
+
+    async function loadHistory() {
+        messages.innerHTML = "";
+
+        if (!activeSessionId) {
+            return;
+        }
+
+        const response = await fetch(
+            `${api}/chat/sessions/${activeSessionId}/history`,
+            {headers: authHeaders()}
+        );
+
+        const history = await readResponse(response);
+
+        for (const message of history) {
+            if (message.role === "user" || message.role === "assistant") {
+                addMessage(message.role, message.content);
+            }
+        }
+    }
+
+    async function deleteCurrentSession() {
+        if (!activeSessionId) {
+            return;
+        }
+
+        if (!window.confirm("Delete this chat and its history?")) {
+            return;
+        }
+
+        setStatus("Deleting chat...");
+
+        try {
+            const response = await fetch(
+                `${api}/chat/sessions/${activeSessionId}`,
+                {
+                    method: "DELETE",
+                    headers: authHeaders()
+                }
+            );
+
+            if (!response.ok) {
+                await readResponse(response);
+            }
+
+            activeSessionId = null;
+            messages.innerHTML = "";
+            await loadSessions(true);
+            setStatus("");
+        } catch (error) {
+            setStatus(`Could not delete chat: ${error.message}`);
+        }
+    }
+
+    function updateControls() {
+        const hasSession = Boolean(activeSessionId);
+        sessionSelector.disabled = sessions.length === 0;
+        deleteChatButton.disabled = !hasSession;
+        queryInput.disabled = !hasSession;
+        queryInput.placeholder = hasSession
+            ? "Ask about your cart or orders"
+            : "Create a chat to begin";
     }
 
     function addMessage(role, content) {

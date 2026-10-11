@@ -7,18 +7,19 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
-import shopping.domain.ChatRequest;
-import shopping.domain.ChatResponse;
-import shopping.domain.LoginRequest;
-import shopping.domain.LoginResponse;
+import shopping.domain.*;
+import shopping.services.ChatSessionStore;
 import shopping.services.IShopGateway;
 import shopping.services.IShoppingAgent;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -26,11 +27,16 @@ public class ChatController {
 
     private final IShopGateway shopGateway;
     private final IShoppingAgent shoppingAgent;
+    private final ChatSessionStore chatSessionStore;
 
-
-    public ChatController(IShopGateway shopGateway, IShoppingAgent shoppingAgent) {
+    public ChatController(
+            IShopGateway shopGateway,
+            IShoppingAgent shoppingAgent,
+            ChatSessionStore chatSessionStore
+    ) {
         this.shopGateway = shopGateway;
         this.shoppingAgent = shoppingAgent;
+        this.chatSessionStore = chatSessionStore;
     }
 
     @GetMapping
@@ -48,23 +54,49 @@ public class ChatController {
     @PostMapping("/chat")
     public ChatResponse chat(
             @Valid @RequestBody ChatRequest request,
-            @RequestParam
+            @RequestHeader(HttpHeaders.AUTHORIZATION)
             String authorization
-            ){
-
+    ) {
         String token = extractBearerToken(authorization);
-        String conversationId = hash(token);
+        String userId = hash(token);
+        UUID sessionId = request.sessionId();
+
+        requireOwnedSession(userId, sessionId);
+
+        String conversationId =
+                userId + ":" + sessionId;
+
+        String query = request.query().strip();
+        Instant now = Instant.now();
 
         String answer = shoppingAgent.chat(
-                request.query().strip(),
+                query,
                 token,
                 conversationId
         );
 
+        // Save visible history only after the AI call succeeds.
+        chatSessionStore.appendMessage(
+                userId,
+                sessionId,
+                new ChatHistoryMessage(
+                        "user",
+                        query,
+                        now
+                )
+        );
+
+        chatSessionStore.appendMessage(
+                userId,
+                sessionId,
+                new ChatHistoryMessage(
+                        "assistant",
+                        answer,
+                        Instant.now()
+                )
+        );
+
         return new ChatResponse(answer);
-
-
-
     }
 
     @DeleteMapping("/chat/history")
@@ -76,6 +108,69 @@ public class ChatController {
 
         String token = extractBearerToken(authorization);
         shoppingAgent.clear(hash(token));
+    }
+
+    @PostMapping("/chat/sessions")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ChatSessionResponse createSession(
+            @Valid @RequestBody CreateChatSessionRequest request,
+            @RequestHeader(HttpHeaders.AUTHORIZATION)
+            String authorization
+    ) {
+        String token = extractBearerToken(authorization);
+        String userId = hash(token);
+
+        return chatSessionStore.createSession(
+                userId,
+                request.title().strip()
+        );
+    }
+
+    @GetMapping("/chat/sessions")
+    public List<ChatSessionResponse> listSessions(
+            @RequestHeader(HttpHeaders.AUTHORIZATION)
+            String authorization
+    ) {
+        String token = extractBearerToken(authorization);
+        return chatSessionStore.listSessions(hash(token));
+    }
+
+    @GetMapping("/chat/sessions/{sessionId}/history")
+    public List<ChatHistoryMessage> getHistory(
+            @PathVariable UUID sessionId,
+            @RequestHeader(HttpHeaders.AUTHORIZATION)
+            String authorization
+    ) {
+        String userId = hash(
+                extractBearerToken(authorization)
+        );
+
+        requireOwnedSession(userId, sessionId);
+
+        return chatSessionStore.getHistory(
+                userId,
+                sessionId
+        );
+    }
+
+    @DeleteMapping("/chat/sessions/{sessionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteSession(
+            @PathVariable UUID sessionId,
+            @RequestHeader(HttpHeaders.AUTHORIZATION)
+            String authorization
+    ) {
+        String userId = hash(
+                extractBearerToken(authorization)
+        );
+
+        requireOwnedSession(userId, sessionId);
+
+        String conversationId =
+                userId + ":" + sessionId;
+
+        shoppingAgent.clear(conversationId);
+        chatSessionStore.deleteSession(userId, sessionId);
     }
 
     private String extractBearerToken(String authorization){
@@ -100,6 +195,18 @@ public class ChatController {
             return HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    private void requireOwnedSession(
+            String userId,
+            UUID sessionId
+    ) {
+        if (!chatSessionStore.sessionExists(userId, sessionId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "Chat session not found"
+            );
         }
     }
 

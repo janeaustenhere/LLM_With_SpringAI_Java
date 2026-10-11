@@ -5,6 +5,7 @@ package com.shopping.config;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
@@ -17,9 +18,12 @@ import shopping.domain.ShoppingPrompt;
 public class SpringAiConfig {
 
     @Bean
-    ChatMemory chatMemory(ShoppingProperties properties){
+    ChatMemory chatMemory(
+            ChatMemoryRepository repository,
+            ShoppingProperties properties
+    ) {
         return MessageWindowChatMemory.builder()
-                .chatMemoryRepository(new InMemoryChatMemoryRepository())
+                .chatMemoryRepository(repository)
                 .maxMessages(properties.maxHistoryMessages())
                 .build();
     }
