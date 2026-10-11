@@ -1,0 +1,32 @@
+server:
+  port: ${SERVER_PORT:8091}
+
+shopping:
+  shop-api-url: ${SHOP_API_URL:http://localhost:8080}
+  shop-api-timeout: ${SHOP_API_TIMEOUT:30s}
+  max-history-messages: ${MAX_HISTORY_MESSAGES:20}
+
+spring:
+  application:
+    name: shopping-assistant-langchain4j
+
+langchain4j:
+  open-ai:
+    chat-model:
+      # LangChain4j expects the complete OpenAI-compatible /v1 URL.
+      base-url: ${OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+      api-key: ${OPENROUTER_API_KEY}
+      model-name: ${OPENROUTER_MODEL:openai/gpt-4o-mini}
+      temperature: 0
+      timeout: ${LLM_TIMEOUT:60s}
+      max-retries: 1
+      log-requests: false
+      log-responses: false
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    dev.langchain4j: INFO
